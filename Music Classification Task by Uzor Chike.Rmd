@@ -1,0 +1,217 @@
+---
+title: "Music Genre Classification Task"
+author: "Uzor Chike"
+date: "2024-04-03"
+output: html_document
+---
+# Introduction
+In this assignment, I aim to perform music classification using machine learning techniques in R. the dataset, sourced from Kaggle, consists of audio features extracted from various music tracks along with their respective genres. We will explore the dataset, preprocess the data, engineer features if necessary, build machine learning models for classification, and evaluate their performance.
+
+## Loading Libraries
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+```
+
+## Importing Dataset
+```{r}
+data <- read.csv('music_genre.csv')
+Music <- data.frame(data)
+head(Music)
+```
+
+## Feature Selection
+Removal of features that have no impact on the learning process
+```{r}
+Music <- subset(Music, select = -c(instance_id, obtained_date, popularity, track_name, artist_name))
+head(Music)
+```
+
+## Pre-processing
+Removal of inconsistencies, duplicates, missing values etc
+```{r}
+sapply(Music, function(x) sum(is.na(x)))
+Music <- na.omit(Music)
+Music <- Music[Music$tempo != "?", ]
+Music <- Music[Music$duration_ms != "-1", ]
+Music$tempo <- as.numeric(Music$tempo)
+```
+
+## Exloratory Data Analysis
+```{r}
+glimpse(Music)
+summary(Music)
+names(Music)
+sapply(Music, class)
+```
+
+## Plots
+### Target Variable Distribution
+
+```{r}
+ggplot(Music, aes(x = music_genre, fill = music_genre)) +
+  geom_bar() +
+  labs(x = "Music Genre", y = "Count", title = "Multi-Class Target Variable Distribution") 
+
+```
+
+Based on domain knowledge, it is understood that rap music is often categorized under the broader genre of hip hop. To ensure clarity and minimize potential misclassifications within my model, as well as to prevent overpopulation of one class in the target variable, I have opted to exclude the rap genre from the classification categories.
+```{r}
+Music <- Music[Music$music_genre != "Rap", ]
+
+ggplot(Music, aes(x = music_genre, fill = music_genre)) +
+  geom_bar() +
+  labs(x = "Music Genre", y = "Count", title = "Multi-Class Target Variable Distribution") 
+```
+
+### Plotting the Correlation Matrix Across the Numeric Features
+```{r}
+library(corrplot)
+Music_numeric <- subset (Music, select = -c(key, mode, music_genre))
+correlation_matrix <- cor(Music_numeric)
+correlation_df <- as.data.frame(correlation_matrix)
+corrplot(correlation_matrix, method = "color")
+```
+
+### Visualizing Distribution Of Categorical Features
+```{r}
+ggplot(Music, aes(x = mode, fill = mode)) +
+  geom_bar()
+ggplot(Music, aes(x = key, fill = key)) +
+  geom_bar()
+```
+
+### Visualizing Tempo across Various Music Genres
+```{r}
+ggplot(Music, aes(x = music_genre, y = tempo, fill = music_genre)) +
+  geom_boxplot() +
+  labs(x = "Music Genre", y = "Tempo") +
+  theme_minimal()
+```
+
+Classical music generally have lower tempo as opposed to Electronic/Dance and Anime
+
+### How danceable are these music genres?
+```{r}
+ggplot(Music, aes(x = music_genre, y = danceability, fill = music_genre)) +
+  geom_bar(stat = "summary", fun = "mean") +
+  labs(x = "Music Genre", y = "Danceability", title = "Average Danceability Score by Music Genre") +
+  theme_minimal()
+```
+
+Hip hop and Elctronic Music are generally more danceable than Classical or Blues.
+
+### From the correlation matrix plotted above, we can see that energy and loudness have a positive correlation. Let's visualize how these features affect the Music genres.
+```{r}
+ggplot(Music, aes(x = energy, y = loudness, color = music_genre)) +
+  geom_line() +
+  labs(x = "Energy", y = "Loudness", title = "Line Plot of Energy vs Loudness by Music Genre") +
+  theme_minimal()
+```
+
+A clear trend emerges indicating that higher levels of energy correspond to higher levels of loudness across all classes of music genres. This displays a positive correlation between energy and loudness in the dataset.
+
+### Normalizing numeric columns using min-max scaling
+```{r}
+numeric_cols <- sapply(Music, is.numeric)
+Music_normalized <- Music
+Music_normalized[, numeric_cols] <- lapply(Music_normalized[, numeric_cols], function(x) (x-min(x)) / (max(x) - min(x)))
+head(Music_normalized)
+Music <- Music_normalized
+```
+
+### Grouped Bar Chart
+```{r}
+subset_data <- Music[Music$music_genre %in% c("Electronic", "Classical", "Country", "Anime"),]
+
+library(tidyr)
+subset_data_long <- gather(subset_data, key = "feature", value = "value", tempo, loudness, speechiness, danceability)
+
+
+#Create a grouped bar chart
+ggplot(subset_data_long, aes(x = feature, y = value, fill = music_genre)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Comparison of Various Numerical Features Across Music Genres",
+       x = "Feature",
+       y = "Value",
+       fill = "Music Genre") +
+  scale_fill_manual(values = c("Electronic" = "blue", "Classical" = "red", "Country" = "pink", "Anime" = "cyan"))
+
+```
+
+# Building a Classification Model to Predict Music Genres
+### Data Reduction
+Given the limitations of my system specifications and the size of the dataset, I decided to perform numerosity reduction based on the distribution of the target variable.
+```{r}
+desired_rows <- 34000
+set.seed(123)
+sampled_indices <- sample(nrow(Music), desired_rows, replace = TRUE)
+sampled_data <- Music[sampled_indices, ]
+table(sampled_data$music_genre)
+Music<- sampled_data
+```
+
+
+### Label encoding categorical features
+```{r}
+Music$key <- factor(Music$key)
+Music$mode <- factor(Music$mode)
+Music$music_genre <- factor(Music$music_genre)
+sapply(Music, class)
+```
+
+All categorical features are now factors
+
+### Split Dataset into training and testing
+```{r}
+set.seed((100))
+TrainingIndex <- createDataPartition(Music$music_genre, p=0.8, list = FALSE)
+TrainingSet <- Music[TrainingIndex, ]
+TestingSet <- Music[-TrainingIndex, ]
+
+X_Train <- TrainingSet[, -13]
+Y_Train <- TrainingSet[, 13]
+
+X_Test <- TestingSet[, -13]
+Y_Test <- TestingSet[, 13]
+head(X_Train)
+```
+
+## Using Random Forest Algorithm
+```{r}
+library(randomForest)
+Model <- randomForest(x = X_Train,
+                      y = Y_Train,
+                      mtry = 4,
+                      ntree = 501,
+                      max_depth = 15,
+                      min_samples_leaf = 200,
+                      importance = TRUE)
+print(Model)
+```
+
+### Making Predictions
+```{r}
+predictions <- predict(Model, newdata = X_Test)
+
+```
+
+### Accuracy Test
+```{r}
+accuracy <- mean(predictions == Y_Test)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+```
+
+An accuracy of approximately 75% can be considered good, given that we have a total of 9 classes to predict.
+
+# Conclusion
+Overall, the analysis provides insights into the feasibility and effectiveness of using machine learning techniques for music classification tasks, offering valuable implications for music recommendation systems and genre-based playlist generation algorithms.
+
+
+
+
+
+
